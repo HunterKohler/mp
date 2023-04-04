@@ -287,7 +287,7 @@ void mp_bit_or(const mp_uint *ap, mp_size an, const mp_uint *bp, mp_size bn,
     MP_EXPECTS(bn);
 
     mp_bit_or_n(ap, bp, bn, rp);
-    mp_uint_move(rp + bn, ap + bn, an - bn);
+    mp_uint_move(ap + bn, an - bn, rp + bn);
 }
 
 void mp_bit_xor_n(const mp_uint *ap, const mp_uint *bp, mp_size n, mp_uint *rp)
@@ -306,7 +306,7 @@ void mp_bit_xor(const mp_uint *ap, mp_size an, const mp_uint *bp, mp_size bn,
     MP_EXPECTS(bn);
 
     mp_bit_xor_n(ap, bp, bn, rp);
-    mp_uint_move(ap + bn, rp + bn, an - bn);
+    mp_uint_move(ap + bn, an - bn, rp + bn);
 }
 
 void mp_bit_not(const mp_uint *ap, mp_size an, mp_uint *rp)

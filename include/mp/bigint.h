@@ -82,7 +82,7 @@ enum mp_errc mp_bigint_div(const struct mp_bigint *a, const struct mp_bigint *b,
                            struct mp_bigint *q, struct mp_bigint *r);
 
 enum mp_errc mp_bigint_div_int(
-    const struct mp_bigint *a, mp_int b, struct mp_bigint *q, mp_int *r);
+    const struct mp_bigint *a, mp_int b, struct mp_bigint *q, mp_uint *r);
 
 enum mp_errc mp_bigint_div_uint(
     const struct mp_bigint *a, mp_uint b, struct mp_bigint *q, mp_uint *r);

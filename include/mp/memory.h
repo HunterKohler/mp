@@ -4,6 +4,11 @@
 #include <stdlib.h>
 #include <mp/mp.h>
 
+struct mp_allocator {
+    /** @private */
+    const struct mp_allocator_interface *_interface;
+};
+
 struct mp_allocator_interface {
     void *(*allocate)(struct mp_allocator *self, mp_size bytes,
                       mp_size alignment);
@@ -13,11 +18,6 @@ struct mp_allocator_interface {
 
     mp_bool (*is_equal)(const struct mp_allocator *self,
                         const struct mp_allocator *other);
-};
-
-struct mp_allocator {
-    /** @private */
-    const struct mp_allocator_interface *_interface;
 };
 
 void mp_allocator_construct(

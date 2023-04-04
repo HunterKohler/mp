@@ -24,11 +24,17 @@ static enum mp_errc mp_bigint_reserve(struct mp_bigint *bigint, mp_size n)
     if (n > bigint->_capacity) {
         mp_uint *new_data = mp_allocate_uint(bigint->_alloc, n);
 
+        if (!new_data) {
+            return MP_ERRC_NOT_ENOUGH_MEMORY;
+        }
+
         mp_uint_copy(bigint->_data, mp_bigint_get_size(bigint), new_data);
         mp_deallocate_uint(bigint->_alloc, bigint->_data, bigint->_capacity);
         bigint->_data = new_data;
         bigint->_capacity = n;
     }
+
+    return MP_ERRC_OK;
 }
 
 static enum mp_errc mp_bigint_assign_uint_positive(
@@ -165,6 +171,8 @@ enum mp_errc mp_bigint_construct_move(
     other->_data = NULL;
     other->_size = 0;
     other->_capacity = 0;
+
+    return MP_ERRC_OK;
 }
 
 void mp_bigint_destruct(struct mp_bigint *bigint)
@@ -363,7 +371,7 @@ static enum mp_errc mp_bigint_abs_sub(
 
     mp_size an = mp_bigint_get_size(a);
     mp_size bn = mp_bigint_get_size(b);
-    int cmp = mp_cmp(a, an, b, bn);
+    int cmp = mp_cmp(a->_data, an, b->_data, bn);
 
     if (cmp > 0) {
         return mp_bigint_abs_sub_ord(a, b, r, an, bn);
@@ -484,7 +492,7 @@ static enum mp_errc mp_bigint_mul_ord(
             return MP_ERRC_NOT_ENOUGH_MEMORY;
         }
 
-        a->_data[an] = mp_mul_uint(a->_data, an, b->_data, bn);
+        a->_data[an] = mp_mul_uint(a->_data, an, b->_data[0], r->_data);
     } else {
         struct mp_bigint tmp;
 
@@ -492,9 +500,9 @@ static enum mp_errc mp_bigint_mul_ord(
             return MP_ERRC_NOT_ENOUGH_MEMORY;
         }
 
-        mp_mul(a->_data, an, b->_data, bn);
-        mp_bigint_swap(r, tmp);
-        mp_bigint_destruct(tmp);
+        mp_mul(a->_data, an, b->_data, bn, r->_data);
+        mp_bigint_swap(r, &tmp);
+        mp_bigint_destruct(&tmp);
     }
 
     rn = mp_bigint_normal_size(r, rn);
@@ -563,11 +571,11 @@ enum mp_errc mp_bigint_div_int(
     const struct mp_bigint *a, mp_int b, struct mp_bigint *q, mp_uint *r)
 {
     if (b >= 0) {
-        return mp_bigint_div_uint(a, b, r);
-    } else if (mp_bigint_div_uint(a, -b, r)) {
+        return mp_bigint_div_uint(a, b, q, r);
+    } else if (mp_bigint_div_uint(a, -b, q, r)) {
         return MP_ERRC_NOT_ENOUGH_MEMORY;
     } else {
-        mp_bigint_negate(r);
+        mp_bigint_negate(q);
         return MP_ERRC_OK;
     }
 }
@@ -634,20 +642,37 @@ static enum mp_errc mp_bigint_bit_and_pp(
 
 // a & -b = a & ~(b - 1)
 
-// static enum mp_errc mp_bigint_bit_and_pn(
-//     const struct mp_bigint *a, const struct mp_bigint *b, struct mp_bigint *r)
-// {
-//     MP_EXPECTS(a->_size > 0);
-//     MP_EXPECTS(b->_size < 0);
+static enum mp_errc mp_bigint_bit_and_pn(
+    const struct mp_bigint *a, const struct mp_bigint *b, struct mp_bigint *r)
+{
+    MP_EXPECTS(a->_size > 0);
+    MP_EXPECTS(b->_size < 0);
 
-//     mp_size an = a->_size;
-//     mp_size bn = -b->_size;
-//     mp_uint c1 = 1;
+    mp_size an = a->_size;
+    mp_size bn = -b->_size;
+    mp_size min_n = an >= bn ? bn : an;
+    mp_uint c1 = 1;
 
-//     if (mp_bigint_reserve(r, an)) {
-//         return MP_ERRC_NOT_ENOUGH_MEMORY;
-//     }
-// }
+    if (mp_bigint_reserve(r, an)) {
+        return MP_ERRC_NOT_ENOUGH_MEMORY;
+    }
+
+    for (mp_size i = 0; i < min_n; i++) {
+        mp_uint av = a->_data[i];
+        mp_uint bv = b->_data[i];
+        mp_uint rv = av & ~(bv - c1);
+
+        c1 = bv < c1;
+        r->_data[i] = rv;
+    }
+
+    if (an > bn) {
+        mp_uint_move(a->_data + bn, an - bn, r->_data + bn);
+    }
+
+    r->_size = mp_bigint_normal_size(r, an);
+    return MP_ERRC_OK;
+}
 
 // -a & -b = ~(a - 1) & ~(b - 1)
 //         = ~((a - 1) | (b - 1))
@@ -733,7 +758,7 @@ static enum mp_errc mp_bigint_bit_or_pp(
     MP_EXPECTS(a->_size >= b->_size);
     MP_EXPECTS(b->_size > 0);
 
-    if (mp_bigint_reserve(r->_data, a->_size)) {
+    if (mp_bigint_reserve(r, a->_size)) {
         return MP_ERRC_NOT_ENOUGH_MEMORY;
     }
 
@@ -757,7 +782,7 @@ static enum mp_errc mp_bigint_bit_or_pn(
     mp_size bn = -b->_size;
 
     if (mp_bigint_reserve(r, bn)) {
-        return MP_ERRC_NOT_ENOUGH_MEMORY
+        return MP_ERRC_NOT_ENOUGH_MEMORY;
     }
 
     mp_uint c1 = 1;
@@ -796,7 +821,6 @@ static enum mp_errc mp_bigint_bit_or_nn(
     MP_EXPECTS(a->_size < b->_size);
     MP_EXPECTS(b->_size < 0);
 
-    mp_size an = -a->_size;
     mp_size bn = -b->_size;
     mp_uint c1 = 1;
     mp_uint c2 = 1;
@@ -865,8 +889,8 @@ static enum mp_errc mp_bigint_xor_pp(
 
     mp_bit_xor(a->_data, a->_size, b->_data, b->_size, r->_data);
 
-    mp_size rn = mp_bigint_normal_size(bigint, a->_size);
-    r->_data = mp_same_sign(a->_size, b->_size) ? rn : -rn;
+    r->_size = mp_bigint_normal_size(r, a->_size);
+    return MP_ERRC_OK;
 }
 
 // a ^ -b = a ^ ~(b - 1)
@@ -892,14 +916,14 @@ static enum mp_errc mp_bigint_xor_pn(
         for (mp_size i = 0; i < bn; i++) {
             mp_uint av = a->_data[i];
             mp_uint bv = b->_data[i];
-            mp_uint rv = (a ^ (b - c1)) + c2;
+            mp_uint rv = (av ^ (bv - c1)) + c2;
 
-            c1 = b < c1;
+            c1 = bv < c1;
             c2 = rv < c2;
             r->_data[i] = rv;
         }
 
-        mp_uint_copy(a->_data + bn, an - bn, r->_data + bn);
+        mp_uint_move(a->_data + bn, an - bn, r->_data + bn);
         r->_size = an;
     } else if (an < bn) {
         if (mp_bigint_reserve(r, bn)) {
@@ -909,9 +933,9 @@ static enum mp_errc mp_bigint_xor_pn(
         for (mp_size i = 0; i < bn; i++) {
             mp_uint av = a->_data[i];
             mp_uint bv = b->_data[i];
-            mp_uint rv = (a ^ (b - c1)) + c2;
+            mp_uint rv = (av ^ (bv - c1)) + c2;
 
-            c1 = b < c1;
+            c1 = bv < c1;
             c2 = rv < c2;
             r->_data[i] = rv;
         }
@@ -960,7 +984,7 @@ static enum mp_errc mp_bigint_xor_nn(
     }
 
     if (an > bn) {
-        mp_sub_uint(a->_data + bn, an - bn, c1);
+        mp_sub_uint(a->_data + bn, an - bn, c1, r->_data + bn);
     }
 
     return MP_ERRC_OK;
